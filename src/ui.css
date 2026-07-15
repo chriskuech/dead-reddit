@@ -1,9 +1,22 @@
+:root {
+  color-scheme: light dark;
+  --dr-bg: #fff;
+  --dr-text: #1a1a1b;
+  --dr-muted: #666;
+  --dr-border: #edeff1;
+  --dr-panel-bg: #f6f7f8;
+  --dr-control-border: #ccc;
+  --dr-accent: #2e86c1;
+  --dr-warning-bg: #fdf2e9;
+  --dr-warning-text: #b9770e;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
-  color: #1a1a1b;
-  background: #fff;
+  color: var(--dr-text);
+  background: var(--dr-bg);
 }
 
 .dr-panel {
@@ -33,7 +46,7 @@ body {
   flex-direction: column;
   align-items: center;
   padding: 12px;
-  background: #f6f7f8;
+  background: var(--dr-panel-bg);
   border-radius: 6px;
 }
 
@@ -45,7 +58,7 @@ body {
 
 .dr-stat__label {
   font-size: 11px;
-  color: #666;
+  color: var(--dr-muted);
   margin-top: 4px;
   text-align: center;
 }
@@ -53,15 +66,16 @@ body {
 .dr-warning {
   margin: 0;
   padding: 6px 8px;
-  background: #fdf2e9;
-  color: #b9770e;
+  background: var(--dr-warning-bg);
+  color: var(--dr-warning-text);
   border-radius: 4px;
   font-size: 12px;
 }
 
 .dr-link-button {
-  border: 1px solid #ccc;
-  background: #fff;
+  border: 1px solid var(--dr-control-border);
+  background: var(--dr-bg);
+  color: var(--dr-text);
   border-radius: 4px;
   padding: 6px 10px;
   cursor: pointer;
@@ -69,7 +83,7 @@ body {
 }
 
 .dr-link-button:hover {
-  background: #f6f7f8;
+  background: var(--dr-panel-bg);
 }
 
 .dr-switch {
@@ -89,7 +103,7 @@ body {
   position: absolute;
   cursor: pointer;
   inset: 0;
-  background: #ccc;
+  background: var(--dr-control-border);
   border-radius: 20px;
   transition: 0.15s;
 }
@@ -107,7 +121,7 @@ body {
 }
 
 .dr-switch input:checked + .dr-switch__slider {
-  background: #2e86c1;
+  background: var(--dr-accent);
 }
 
 .dr-switch input:checked + .dr-switch__slider::before {
@@ -237,7 +251,7 @@ button.dr-danger:hover {
 .dr-tabs {
   display: flex;
   gap: 4px;
-  border-bottom: 1px solid #edeff1;
+  border-bottom: 1px solid var(--dr-border);
 }
 
 .dr-tab {
@@ -246,22 +260,22 @@ button.dr-danger:hover {
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;
-  color: #666;
+  color: var(--dr-muted);
   border-bottom: 2px solid transparent;
 }
 
 .dr-tab:hover {
-  color: #1a1a1b;
+  color: var(--dr-text);
 }
 
 .dr-tab--active {
-  color: #1a1a1b;
+  color: var(--dr-text);
   font-weight: 700;
-  border-bottom-color: #2e86c1;
+  border-bottom-color: var(--dr-accent);
 }
 
 .dr-muted {
-  color: #666;
+  color: var(--dr-muted);
   font-size: 12px;
   margin: 0;
 }
@@ -275,16 +289,31 @@ button.dr-danger:hover {
 .dr-table th {
   text-align: left;
   padding: 6px 8px;
-  border-bottom: 1px solid #edeff1;
-  color: #666;
+  border-bottom: 1px solid var(--dr-border);
+  color: var(--dr-muted);
   font-weight: 600;
 }
 
 .dr-table td {
   padding: 6px 8px;
-  border-bottom: 1px solid #f6f7f8;
+  border-bottom: 1px solid var(--dr-panel-bg);
 }
 
 .dr-table tr:last-child td {
   border-bottom: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  body.dr-dashboard-page,
+  body.dr-popup-page {
+    --dr-bg: #1a1a1b;
+    --dr-text: #d7dadc;
+    --dr-muted: #9a9a9a;
+    --dr-border: #343536;
+    --dr-panel-bg: #272729;
+    --dr-control-border: #4b4c4f;
+    --dr-accent: #4fa8e0;
+    --dr-warning-bg: #3a2a12;
+    --dr-warning-text: #e0a458;
+  }
 }
