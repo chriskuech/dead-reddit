@@ -3,7 +3,7 @@
   "name": "Dead Reddit",
   "description": "Flags Reddit usernames with their BotBouncer classification and can filter (hide) flagged accounts.",
   "version": "0",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
   "host_permissions": ["*://*.reddit.com/*"],
   "content_scripts": [
     {

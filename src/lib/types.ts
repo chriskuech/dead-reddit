@@ -82,6 +82,29 @@ export interface FlairUpdatedPush {
   result: CacheEntryWithStaleness;
 }
 
+/**
+ * Search result cards don't expose their author anywhere in the DOM, so the content script
+ * batch-resolves post ids (extracted from the title permalink) via Reddit's /by_id endpoint
+ * instead. Cached entries are returned immediately; uncached ones are queued and delivered
+ * later via a `post-author-resolved` push, mirroring the check-usernames/flair-updated flow.
+ */
+export interface ResolvePostAuthorsRequest {
+  type: "resolve-post-authors";
+  postIds: string[];
+}
+
+export interface ResolvePostAuthorsResponse {
+  /** Only already-cached post ids are included here. */
+  results: Record<string, string | null>;
+}
+
+/** Pushed from background to content scripts once a queued post's author batch-fetch resolves. */
+export interface PostAuthorResolvedPush {
+  type: "post-author-resolved";
+  postId: string;
+  author: string | null;
+}
+
 export interface GetStatsRequest {
   type: "get-stats";
 }
@@ -104,9 +127,17 @@ export interface ClearCacheResponse {
   success: true;
 }
 
-export type BackgroundRequest = CheckUsernamesRequest | GetStatsRequest | ClearCacheRequest;
+export type BackgroundRequest =
+  | CheckUsernamesRequest
+  | ResolvePostAuthorsRequest
+  | GetStatsRequest
+  | ClearCacheRequest;
 
-export type BackgroundResponse = CheckUsernamesResponse | BackgroundStats | ClearCacheResponse;
+export type BackgroundResponse =
+  | CheckUsernamesResponse
+  | ResolvePostAuthorsResponse
+  | BackgroundStats
+  | ClearCacheResponse;
 
 // ---- Messages: popup -> content script (per-tab session stats) ----
 
@@ -123,5 +154,13 @@ export interface PageStats {
 export interface BlockedSubreddit {
   /** Lowercase, no "r/" prefix. */
   subreddit: string;
+  blockedAt: number;
+}
+
+// ---- Blocked users (chrome.storage.sync) ----
+
+export interface BlockedUser {
+  /** Lowercase, no "u/" prefix. */
+  username: string;
   blockedAt: number;
 }

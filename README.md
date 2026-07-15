@@ -19,8 +19,8 @@ you the tools to stop seeing it.
 
 ## What it does
 
-Both of the extension's main features are ways of blocking bots — one at the
-account level, one at the community level:
+The extension's main features are ways of blocking bots, at three levels —
+account, community, and individual accounts you block by hand:
 
 1. **Flags individual bot accounts.** Every username you encounter is checked
    against [r/BotBouncer](https://www.reddit.com/r/BotBouncer/), a
@@ -32,6 +32,11 @@ account level, one at the community level:
    next to every subreddit name you see. If a community has been taken over
    by bots, one click hides every post from it, immediately and permanently,
    without leaving the page.
+3. **Blocks individual accounts by hand.** A matching "Block u/‹username›"
+   chip appears next to every username you see. Useful for accounts
+   BotBouncer hasn't classified (yet) but you've decided you don't want to
+   see — one click hides every post and comment from that account,
+   immediately and permanently.
 
 Nothing is sent anywhere you didn't already send it — the extension rides
 your existing logged-in reddit.com session to look up classifications
@@ -46,12 +51,21 @@ directly, with no separate account, API key, or backend server involved.
   collapse them, or just show the badge without hiding anything.
 - **One-click subreddit blocking** — block a subreddit straight from the
   feed; blocked subreddits are hidden on every subsequent visit.
-- **Dashboard page** — a full-page view (opened from the popup) with two
+- **One-click user blocking** — block an individual account straight from the
+  feed, independent of its BotBouncer classification; blocked users' posts
+  and comments are hidden on every subsequent visit.
+- **Works on search results too** — Reddit's search cards don't expose an
+  author anywhere in the page, so badges and the block-u chip resolve there
+  via a batched lookup (one request covers every result on the page) instead
+  of the usual per-post DOM read.
+- **Dashboard page** — a full-page view (opened from the popup) with three
   tabs:
   - **Analyzed Users** — every account the extension has looked up, with its
     classification, when it was last checked, and a link to the source post.
   - **Blocked Subreddits** — every subreddit you've blocked, with a one-click
     unblock button.
+  - **Blocked Users** — every account you've blocked by hand, with a
+    one-click unblock button.
 - **Popup** — master on/off toggle, a count of flagged accounts on the
   current page, and links to the dashboard and settings.
 - **Options page** — pick which classifications to filter, how to filter them

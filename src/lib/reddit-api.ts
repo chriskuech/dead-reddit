@@ -1,6 +1,9 @@
 import { isBotBouncerFlair, type BotBouncerFlair, type FlairResult } from "./types";
 
 const SEARCH_URL = "https://www.reddit.com/r/BotBouncer/search.json";
+const BY_ID_URL = "https://www.reddit.com/by_id/";
+/** Reddit's /by_id listing endpoint accepts a comma-separated list of fullnames; keep batches modest. */
+export const MAX_POST_AUTHOR_BATCH = 50;
 
 export class RateLimitedError extends Error {
   retryAfterMs: number | null;
@@ -81,4 +84,63 @@ export async function fetchFlairForUser(username: string): Promise<FlairResult> 
     : (first.url ?? null);
 
   return { flair, postUrl, checkedAt: Date.now() };
+}
+
+interface ByIdListingChild {
+  data?: {
+    name?: string; // fullname, e.g. "t3_abc123"
+    author?: string;
+  };
+}
+
+interface ByIdListing {
+  data?: {
+    children?: ByIdListingChild[];
+  };
+}
+
+/**
+ * Batch-resolves the author of up to `MAX_POST_AUTHOR_BATCH` posts via Reddit's public
+ * /by_id listing endpoint. Used for search result cards, which — unlike the main feed —
+ * don't expose the post author anywhere in the DOM.
+ */
+export async function fetchAuthorsForPostIds(
+  postIds: string[],
+): Promise<Record<string, string | null>> {
+  const results: Record<string, string | null> = {};
+  if (postIds.length === 0) return results;
+  for (const postId of postIds) results[postId] = null;
+
+  const fullnames = postIds.map((id) => `t3_${id}`).join(",");
+  const response = await fetch(`${BY_ID_URL}${fullnames}.json`, {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+
+  if (response.status === 429) {
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : null;
+    throw new RateLimitedError(retryAfterMs);
+  }
+
+  if (!response.ok) {
+    throw new Error(`by_id request failed with status ${response.status}`);
+  }
+
+  let listing: ByIdListing;
+  try {
+    listing = (await response.json()) as ByIdListing;
+  } catch {
+    throw new Error("by_id returned malformed JSON");
+  }
+
+  for (const child of listing.data?.children ?? []) {
+    const name = child.data?.name;
+    const author = child.data?.author;
+    if (!name?.startsWith("t3_")) continue;
+    const postId = name.slice(3);
+    if (author && author !== "[deleted]") results[postId] = author;
+  }
+
+  return results;
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchFlairForUser, RateLimitedError } from "../src/lib/reddit-api";
+import { fetchAuthorsForPostIds, fetchFlairForUser, RateLimitedError } from "../src/lib/reddit-api";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -105,5 +105,82 @@ describe("fetchFlairForUser", () => {
   it("throws on malformed JSON", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response("not json", { status: 200 }));
     await expect(fetchFlairForUser("someuser")).rejects.toThrow();
+  });
+});
+
+describe("fetchAuthorsForPostIds", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns an empty object without making a request for an empty list", async () => {
+    const result = await fetchAuthorsForPostIds([]);
+    expect(result).toEqual({});
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("requests /by_id with comma-joined t3_ fullnames and credentials included", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(jsonResponse({ data: { children: [] } }));
+
+    await fetchAuthorsForPostIds(["abc123", "def456"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://www.reddit.com/by_id/t3_abc123,t3_def456.json");
+    expect(options).toMatchObject({ credentials: "include" });
+  });
+
+  it("maps each resolved post id to its author", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({
+        data: {
+          children: [
+            { data: { name: "t3_abc123", author: "someuser" } },
+            { data: { name: "t3_def456", author: "otheruser" } },
+          ],
+        },
+      }),
+    );
+
+    const result = await fetchAuthorsForPostIds(["abc123", "def456"]);
+    expect(result).toEqual({ abc123: "someuser", def456: "otheruser" });
+  });
+
+  it("defaults unresolved post ids to null, including deleted authors", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({
+        data: { children: [{ data: { name: "t3_abc123", author: "[deleted]" } }] },
+      }),
+    );
+
+    const result = await fetchAuthorsForPostIds(["abc123", "missing"]);
+    expect(result).toEqual({ abc123: null, missing: null });
+  });
+
+  it("throws RateLimitedError on 429, using Retry-After when present", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(null, { status: 429, headers: { "Retry-After": "15" } }),
+    );
+    await expect(fetchAuthorsForPostIds(["abc123"])).rejects.toBeInstanceOf(RateLimitedError);
+    try {
+      await fetchAuthorsForPostIds(["abc123"]);
+    } catch (error) {
+      expect((error as RateLimitedError).retryAfterMs).toBe(15_000);
+    }
+  });
+
+  it("throws on other non-200 statuses", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 500 }));
+    await expect(fetchAuthorsForPostIds(["abc123"])).rejects.toThrow();
+  });
+
+  it("throws on malformed JSON", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response("not json", { status: 200 }));
+    await expect(fetchAuthorsForPostIds(["abc123"])).rejects.toThrow();
   });
 });

@@ -1,5 +1,6 @@
-import { fetchFlairForUser, RateLimitedError } from "./lib/reddit-api";
+import { fetchAuthorsForPostIds, fetchFlairForUser, MAX_POST_AUTHOR_BATCH, RateLimitedError } from "./lib/reddit-api";
 import * as cache from "./lib/cache";
+import * as postAuthorCache from "./lib/post-author-cache";
 import { getSettings } from "./lib/settings";
 import type {
   BackgroundStats,
@@ -8,6 +9,9 @@ import type {
   CheckUsernamesResponse,
   ClearCacheResponse,
   FlairUpdatedPush,
+  PostAuthorResolvedPush,
+  ResolvePostAuthorsRequest,
+  ResolvePostAuthorsResponse,
 } from "./lib/types";
 
 const NEGATIVE_CACHE_TTL_MS = 10 * 60 * 1000; // short TTL for lookup failures with no prior cache
@@ -21,6 +25,13 @@ const refreshQueue: string[] = [];
 const queuedUsernames = new Set<string>();
 /** username -> tabIds currently displaying it, so refresh pushes reach every viewer. */
 const viewers = new Map<string, Set<number>>();
+
+/** Post ids awaiting an author batch-lookup (search result cards). Drained after the username queues. */
+const postAuthorQueue: string[] = [];
+/** Post ids currently present in postAuthorQueue, for O(1) dedupe. */
+const queuedPostIds = new Set<string>();
+/** postId -> tabIds waiting on its resolution, so the result reaches every viewer. */
+const postAuthorViewers = new Map<string, Set<number>>();
 
 let processing = false;
 let rateLimitedUntil: number | null = null;
@@ -52,6 +63,28 @@ function broadcastUpdate(username: string, result: CacheEntryWithStaleness): voi
   }
 }
 
+function registerPostAuthorViewer(postId: string, tabId: number | undefined): void {
+  if (tabId === undefined) return;
+  let set = postAuthorViewers.get(postId);
+  if (!set) {
+    set = new Set();
+    postAuthorViewers.set(postId, set);
+  }
+  set.add(tabId);
+}
+
+function broadcastPostAuthorResolved(postId: string, author: string | null): void {
+  const tabIds = postAuthorViewers.get(postId);
+  postAuthorViewers.delete(postId);
+  if (!tabIds || tabIds.size === 0) return;
+  const message: PostAuthorResolvedPush = { type: "post-author-resolved", postId, author };
+  for (const tabId of tabIds) {
+    chrome.tabs.sendMessage(tabId, message).catch(() => {
+      // Tab navigated away, closed, or has no listening content script — drop silently.
+    });
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
@@ -64,22 +97,43 @@ function enqueue(username: string, hasCacheEntry: boolean): void {
   void processQueue();
 }
 
-/** Drains the priority queue fully before touching the refresh queue. */
+/** Adds post ids to the author-lookup queue and kicks off processing if idle. */
+function enqueuePostAuthors(postIds: string[]): void {
+  let added = false;
+  for (const postId of postIds) {
+    if (queuedPostIds.has(postId)) continue;
+    queuedPostIds.add(postId);
+    postAuthorQueue.push(postId);
+    added = true;
+  }
+  if (added) void processQueue();
+}
+
+/**
+ * Drains the priority queue, then the refresh queue, then the post-author queue (batched),
+ * all through the same rate-limited/backoff gate so every reddit.com request the extension
+ * makes — regardless of purpose — is serialized behind a single `requestDelayMs` spacing.
+ */
 async function processQueue(): Promise<void> {
   if (processing) return;
   processing = true;
   try {
-    while (priorityQueue.length > 0 || refreshQueue.length > 0) {
+    while (priorityQueue.length > 0 || refreshQueue.length > 0 || postAuthorQueue.length > 0) {
       if (rateLimitedUntil !== null && Date.now() < rateLimitedUntil) {
         await sleep(rateLimitedUntil - Date.now());
         continue;
       }
       const settings = await getSettings();
-      const username = priorityQueue.length > 0 ? priorityQueue.shift() : refreshQueue.shift();
-      if (username === undefined) continue;
-      queuedUsernames.delete(username);
-      await processUsername(username, settings.cacheTtlMs);
       if (priorityQueue.length > 0 || refreshQueue.length > 0) {
+        const username = priorityQueue.length > 0 ? priorityQueue.shift()! : refreshQueue.shift()!;
+        queuedUsernames.delete(username);
+        await processUsername(username, settings.cacheTtlMs);
+      } else {
+        const batch = postAuthorQueue.splice(0, MAX_POST_AUTHOR_BATCH);
+        for (const postId of batch) queuedPostIds.delete(postId);
+        await processPostAuthorBatch(batch);
+      }
+      if (priorityQueue.length > 0 || refreshQueue.length > 0 || postAuthorQueue.length > 0) {
         await sleep(settings.requestDelayMs);
       }
     }
@@ -119,6 +173,33 @@ async function processUsername(username: string, cacheTtlMs: number): Promise<vo
   }
 }
 
+async function processPostAuthorBatch(postIds: string[]): Promise<void> {
+  if (postIds.length === 0) return;
+  try {
+    const authors = await fetchAuthorsForPostIds(postIds);
+    backoffMs = 0;
+    lastSyncAt = Date.now();
+    for (const postId of postIds) {
+      const author = authors[postId] ?? null;
+      await postAuthorCache.set(postId, author);
+      broadcastPostAuthorResolved(postId, author);
+    }
+  } catch (error) {
+    if (error instanceof RateLimitedError) {
+      backoffMs = backoffMs === 0 ? 2000 : Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+      rateLimitedUntil = Date.now() + (error.retryAfterMs ?? backoffMs);
+      // Requeue the whole batch for retry once the backoff window elapses.
+      for (const postId of postIds) {
+        queuedPostIds.add(postId);
+        postAuthorQueue.unshift(postId);
+      }
+      return;
+    }
+    // Network error, non-200, malformed JSON: leave these post ids unresolved — the
+    // originating tab's next scan will naturally re-request them.
+  }
+}
+
 async function handleCheckUsernames(
   message: CheckUsernamesRequest,
   tabId: number | undefined,
@@ -142,6 +223,30 @@ async function handleCheckUsernames(
       enqueue(username, true);
     }
   }
+
+  return { results };
+}
+
+async function handleResolvePostAuthors(
+  message: ResolvePostAuthorsRequest,
+  tabId: number | undefined,
+): Promise<ResolvePostAuthorsResponse> {
+  const postIds = Array.from(new Set(message.postIds)).filter((postId) => postId.length > 0);
+  const cached = await postAuthorCache.getMany(postIds);
+  const results: Record<string, string | null> = {};
+  const uncached: string[] = [];
+
+  for (const postId of postIds) {
+    const author = cached[postId];
+    if (author === undefined) {
+      registerPostAuthorViewer(postId, tabId);
+      uncached.push(postId);
+    } else {
+      results[postId] = author;
+    }
+  }
+
+  if (uncached.length > 0) enqueuePostAuthors(uncached);
 
   return { results };
 }
@@ -172,6 +277,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse,
       );
       return true;
+    case "resolve-post-authors":
+      void handleResolvePostAuthors(message as ResolvePostAuthorsRequest, sender.tab?.id).then(
+        sendResponse,
+      );
+      return true;
     case "get-stats":
       void handleGetStats().then(sendResponse);
       return true;
@@ -187,6 +297,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   for (const set of viewers.values()) {
     set.delete(tabId);
   }
+  for (const set of postAuthorViewers.values()) {
+    set.delete(tabId);
+  }
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -196,5 +309,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === PRUNE_ALARM) {
     void cache.prune(PRUNE_MAX_AGE_MS);
+    void postAuthorCache.prune(PRUNE_MAX_AGE_MS);
   }
 });

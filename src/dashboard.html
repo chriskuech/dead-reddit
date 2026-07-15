@@ -16,6 +16,9 @@
         <button class="dr-tab" id="tab-subreddits" role="tab" aria-selected="false">
           Blocked Subreddits
         </button>
+        <button class="dr-tab" id="tab-blocked-users" role="tab" aria-selected="false">
+          Blocked Users
+        </button>
       </div>
 
       <div class="dr-tab-panel" id="panel-users" role="tabpanel">
@@ -45,6 +48,20 @@
             </tr>
           </thead>
           <tbody id="subreddits-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="dr-tab-panel" id="panel-blocked-users" role="tabpanel" hidden>
+        <p class="dr-muted" id="blocked-users-count">0 blocked users</p>
+        <table class="dr-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Blocked at</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="blocked-users-table-body"></tbody>
         </table>
       </div>
     </div>

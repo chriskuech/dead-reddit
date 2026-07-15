@@ -1,7 +1,9 @@
 import {
   findAuthorElements,
+  findSearchAuthorTargets,
   findSubredditElements,
   markProcessed,
+  markSearchAuthorProcessed,
   markSubredditProcessed,
   type AuthorMatch,
   type SubredditMatch,
@@ -14,12 +16,21 @@ import {
   onBlockedSubredditsChanged,
 } from "./lib/blocked-subreddits";
 import {
+  blockUser,
+  getBlockedUsers,
+  normalizeUsername,
+  onBlockedUsersChanged,
+} from "./lib/blocked-users";
+import {
   DEFAULT_SETTINGS,
   type CacheEntryWithStaleness,
   type CheckUsernamesRequest,
   type CheckUsernamesResponse,
   type FlairUpdatedPush,
   type PageStats,
+  type PostAuthorResolvedPush,
+  type ResolvePostAuthorsRequest,
+  type ResolvePostAuthorsResponse,
   type Settings,
 } from "./lib/types";
 
@@ -30,6 +41,7 @@ const HIDDEN_CLASS = "dr-hidden";
 const COLLAPSED_CLASS = "dr-collapsed";
 const BLOCK_CHIP_CLASS = "dr-block-chip";
 const SUB_BLOCKED_CLASS = "dr-sub-blocked";
+const USER_BLOCKED_CLASS = "dr-user-blocked";
 const SCAN_DEBOUNCE_MS = 300;
 const NAV_POLL_MS = 1000;
 
@@ -58,25 +70,52 @@ const STYLES = `
   opacity: 0.5;
 }
 .${BLOCK_CHIP_CLASS} {
-  display: inline-block;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   margin-left: 4px;
-  padding: 0 6px;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  color: #c0392b;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
   background: transparent;
-  border: 1px solid #c0392b;
   cursor: pointer;
   vertical-align: middle;
-  white-space: nowrap;
+  flex: none;
+  color: inherit;
 }
 .${BLOCK_CHIP_CLASS}:hover {
-  background: #c0392b;
-  color: #fff;
+  background: var(--color-brand-background, #ff4500);
+}
+.${BLOCK_CHIP_CLASS}__ring {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-brand-background, #ff4500);
+}
+.${BLOCK_CHIP_CLASS}__slash {
+  position: absolute;
+  top: 50%;
+  left: 9%;
+  width: 82%;
+  height: 1.5px;
+  background: var(--color-brand-background, #ff4500);
+  transform: translateY(-50%) rotate(45deg);
+}
+.${BLOCK_CHIP_CLASS}__label {
+  position: relative;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  color: inherit;
 }
 .${SUB_BLOCKED_CLASS} {
+  display: none !important;
+}
+.${USER_BLOCKED_CLASS} {
   display: none !important;
 }
 `;
@@ -93,6 +132,12 @@ interface SubredditRecord {
   containerEl: Element;
 }
 
+interface UserBlockRecord {
+  username: string;
+  chipEl: HTMLButtonElement;
+  containerEl: Element;
+}
+
 /** username -> every badge/container pair currently on the page for that user. */
 const records = new Map<string, BadgeRecord[]>();
 /** Usernames whose current flair matched the active filter list, this tab session. */
@@ -101,6 +146,14 @@ const flaggedUsernames = new Set<string>();
 const subredditRecords = new Map<string, SubredditRecord[]>();
 /** Normalized subreddit names currently on the user's block list. */
 const blockedSubreddits = new Set<string>();
+/** username -> every block-chip/container pair currently on the page for that user. */
+const userBlockRecords = new Map<string, UserBlockRecord[]>();
+/** Normalized usernames currently on the user's block list. */
+const blockedUsers = new Set<string>();
+/** Post/comment container -> its subreddit block chip, so the user-block chip can sit right next to it. */
+const subredditChipByContainer = new WeakMap<Element, HTMLButtonElement>();
+/** postId -> search-result card awaiting an async author resolution. */
+const pendingSearchAuthors = new Map<string, Element>();
 
 let currentSettings: Settings = DEFAULT_SETTINGS;
 let observer: MutationObserver | null = null;
@@ -157,7 +210,7 @@ function applyResultToUsername(username: string, entry: CacheEntryWithStaleness)
   for (const record of group) applyRecord(record, entry);
 }
 
-function createBadgeRecord(match: AuthorMatch): void {
+function createBadgeRecord(match: AuthorMatch): HTMLSpanElement {
   const username = match.username.toLowerCase();
   const badgeEl = document.createElement("span");
   badgeEl.className = BADGE_CLASS;
@@ -168,6 +221,18 @@ function createBadgeRecord(match: AuthorMatch): void {
   const existing = records.get(username);
   if (existing) existing.push(record);
   else records.set(username, [record]);
+  return badgeEl;
+}
+
+/** Builds a small circular "block" button — a slashed ring with a `r/`/`u/` label inside. */
+function createBlockChip(label: string, fullLabel: string): HTMLButtonElement {
+  const chipEl = document.createElement("button");
+  chipEl.type = "button";
+  chipEl.className = BLOCK_CHIP_CLASS;
+  chipEl.title = `Block ${fullLabel}`;
+  chipEl.setAttribute("aria-label", `Block ${fullLabel}`);
+  chipEl.innerHTML = `<span class="${BLOCK_CHIP_CLASS}__ring" aria-hidden="true"></span><span class="${BLOCK_CHIP_CLASS}__slash" aria-hidden="true"></span><span class="${BLOCK_CHIP_CLASS}__label" aria-hidden="true">${label}</span>`;
+  return chipEl;
 }
 
 function applySubredditRecord(record: SubredditRecord): void {
@@ -203,22 +268,74 @@ async function handleBlockClick(subreddit: string): Promise<void> {
 
 function createSubredditRecord(match: SubredditMatch): void {
   const subreddit = normalizeSubreddit(match.subreddit);
-  const chipEl = document.createElement("button");
-  chipEl.type = "button";
-  chipEl.className = BLOCK_CHIP_CLASS;
-  chipEl.textContent = `Block r/${subreddit}`;
+  const chipEl = createBlockChip("r/", `r/${subreddit}`);
   chipEl.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     void handleBlockClick(subreddit);
   });
   match.anchorElement.insertAdjacentElement("afterend", chipEl);
+  subredditChipByContainer.set(match.containerElement, chipEl);
 
   const record: SubredditRecord = { subreddit, chipEl, containerEl: match.containerElement };
   const existing = subredditRecords.get(subreddit);
   if (existing) existing.push(record);
   else subredditRecords.set(subreddit, [record]);
   applySubredditRecord(record);
+}
+
+function applyUserBlockRecord(record: UserBlockRecord): void {
+  const { chipEl, containerEl, username } = record;
+
+  if (!currentSettings.enabled) {
+    chipEl.style.display = "none";
+    containerEl.classList.remove(USER_BLOCKED_CLASS);
+    return;
+  }
+
+  if (blockedUsers.has(username)) {
+    chipEl.style.display = "none";
+    containerEl.classList.add(USER_BLOCKED_CLASS);
+  } else {
+    chipEl.style.display = "";
+    containerEl.classList.remove(USER_BLOCKED_CLASS);
+  }
+}
+
+function applyAllUserBlockRecords(): void {
+  for (const group of userBlockRecords.values()) {
+    for (const record of group) applyUserBlockRecord(record);
+  }
+}
+
+async function handleUserBlockClick(username: string): Promise<void> {
+  await blockUser(username);
+  blockedUsers.add(normalizeUsername(username));
+  const group = userBlockRecords.get(normalizeUsername(username));
+  if (group) for (const record of group) applyUserBlockRecord(record);
+}
+
+/**
+ * Inserts a "Block u/‹username›" chip immediately after the post/comment's subreddit block
+ * chip, so the two block buttons sit right next to each other. Falls back to right after
+ * `afterEl` (the just-created badge) when the container has no subreddit chip (e.g. comments).
+ */
+function createUserBlockRecord(match: AuthorMatch, afterEl: Element): void {
+  const username = normalizeUsername(match.username);
+  const chipEl = createBlockChip("u/", `u/${username}`);
+  chipEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void handleUserBlockClick(username);
+  });
+  const insertAfter = subredditChipByContainer.get(match.containerElement) ?? afterEl;
+  insertAfter.insertAdjacentElement("afterend", chipEl);
+
+  const record: UserBlockRecord = { username, chipEl, containerEl: match.containerElement };
+  const existing = userBlockRecords.get(username);
+  if (existing) existing.push(record);
+  else userBlockRecords.set(username, [record]);
+  applyUserBlockRecord(record);
 }
 
 async function requestClassifications(usernames: string[]): Promise<void> {
@@ -236,20 +353,71 @@ async function requestClassifications(usernames: string[]): Promise<void> {
   }
 }
 
-function scan(root: ParentNode): void {
-  const matches = findAuthorElements(root);
-  for (const match of matches) {
-    markProcessed(match.markerElement);
-    createBadgeRecord(match);
-  }
-  if (matches.length > 0) {
-    void requestClassifications(matches.map((match) => match.username.toLowerCase()));
-  }
+/** Builds the badge + user-block chip for a search card once its author has been resolved. */
+function createSearchAuthorRecord(containerElement: Element, username: string): void {
+  const anchorElement = subredditChipByContainer.get(containerElement) ?? containerElement;
+  const match: AuthorMatch = { username, anchorElement, containerElement, markerElement: containerElement };
+  const badgeEl = createBadgeRecord(match);
+  createUserBlockRecord(match, badgeEl);
+  void requestClassifications([username.toLowerCase()]);
+}
 
+function applyResolvedPostAuthor(postId: string, author: string | null): void {
+  const containerElement = pendingSearchAuthors.get(postId);
+  if (!containerElement) return;
+  pendingSearchAuthors.delete(postId);
+  if (author) createSearchAuthorRecord(containerElement, author);
+}
+
+async function requestPostAuthors(postIds: string[]): Promise<void> {
+  const request: ResolvePostAuthorsRequest = { type: "resolve-post-authors", postIds };
+  let response: ResolvePostAuthorsResponse | undefined;
+  try {
+    response = await chrome.runtime.sendMessage(request);
+  } catch {
+    return; // background not reachable; unresolved postIds arrive later via the push, if at all
+  }
+  if (!response) return;
+  for (const [postId, author] of Object.entries(response.results)) {
+    applyResolvedPostAuthor(postId, author);
+  }
+}
+
+/**
+ * Search result cards expose no username in the DOM at all, so instead of reading one
+ * synchronously (like findAuthorElements), this collects post ids and batch-resolves their
+ * authors via the background worker's /by_id lookup (see requestPostAuthors).
+ */
+function scanSearchAuthors(root: ParentNode): void {
+  const targets = findSearchAuthorTargets(root);
+  const newPostIds: string[] = [];
+  for (const target of targets) {
+    markSearchAuthorProcessed(target.containerElement);
+    pendingSearchAuthors.set(target.postId, target.containerElement);
+    newPostIds.push(target.postId);
+  }
+  if (newPostIds.length > 0) void requestPostAuthors(newPostIds);
+}
+
+function scan(root: ParentNode): void {
+  // Subreddit chips are created first so createUserBlockRecord can find one on the same
+  // container and place the user-block chip right next to it.
   const subredditMatches = findSubredditElements(root);
   for (const match of subredditMatches) {
     markSubredditProcessed(match.markerElement);
     createSubredditRecord(match);
+  }
+
+  scanSearchAuthors(root);
+
+  const matches = findAuthorElements(root);
+  for (const match of matches) {
+    markProcessed(match.markerElement);
+    const badgeEl = createBadgeRecord(match);
+    createUserBlockRecord(match, badgeEl);
+  }
+  if (matches.length > 0) {
+    void requestClassifications(matches.map((match) => match.username.toLowerCase()));
   }
 }
 
@@ -292,6 +460,12 @@ function handleRuntimeMessage(
     return false;
   }
 
+  if (message.type === "post-author-resolved") {
+    const push = message as PostAuthorResolvedPush;
+    applyResolvedPostAuthor(push.postId, push.author);
+    return false;
+  }
+
   if (message.type === "get-page-stats") {
     sendResponse({ flaggedCount: flaggedUsernames.size });
     return false;
@@ -304,6 +478,7 @@ async function init(): Promise<void> {
   injectStyles();
   currentSettings = await getSettings();
   for (const entry of await getBlockedSubreddits()) blockedSubreddits.add(entry.subreddit);
+  for (const entry of await getBlockedUsers()) blockedUsers.add(entry.username);
   startObserving();
   scan(document.body);
 
@@ -314,12 +489,19 @@ async function init(): Promise<void> {
     currentSettings = settings;
     void refreshAllRecords();
     applyAllSubredditRecords();
+    applyAllUserBlockRecords();
   });
 
   onBlockedSubredditsChanged((list) => {
     blockedSubreddits.clear();
     for (const entry of list) blockedSubreddits.add(entry.subreddit);
     applyAllSubredditRecords();
+  });
+
+  onBlockedUsersChanged((list) => {
+    blockedUsers.clear();
+    for (const entry of list) blockedUsers.add(entry.username);
+    applyAllUserBlockRecords();
   });
 
   chrome.runtime.onMessage.addListener(handleRuntimeMessage);

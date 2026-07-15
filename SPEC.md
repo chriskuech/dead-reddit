@@ -98,16 +98,18 @@ The priority queue is always drained first; the refresh queue is only processed 
 
 ```
 src/
-  content.ts             // DOM scanning, badge injection, filtering, subreddit block chips
+  content.ts             // DOM scanning, badge injection, filtering, subreddit/user block chips
   background.ts           // service worker: dual queue, fetch, cache, rate limit
   popup.ts / popup.html    // quick toggle + stats, links to options and dashboard
   options.ts / options.html // flair filter settings, cache TTL, rate limit config
-  dashboard.ts / dashboard.html // analyzed users + blocked subreddits, in two tabs
+  dashboard.ts / dashboard.html // analyzed users + blocked subreddits + blocked users, in three tabs
   lib/
-    reddit-api.ts          // fetchFlairForUser(username): Promise<FlairResult>
-    cache.ts               // get/set/getAll/prune chrome.storage.local cache
+    reddit-api.ts          // fetchFlairForUser(username): Promise<FlairResult>; fetchAuthorsForPostIds(postIds): Promise<Record<string, string | null>>
+    cache.ts               // get/set/getAll/prune chrome.storage.local cache (username -> flair)
+    post-author-cache.ts    // get/set/prune chrome.storage.local cache (postId -> author)
     settings.ts             // typed settings schema + chrome.storage.sync wrapper
-    blocked-subreddits.ts   // block/unblock list + chrome.storage.sync wrapper
+    blocked-subreddits.ts   // block/unblock subreddit list + chrome.storage.sync wrapper
+    blocked-users.ts        // block/unblock user list + chrome.storage.sync wrapper
     dom-selectors.ts        // centralized selectors for old/new Reddit, isolated for easy maintenance
     types.ts
   manifest.json
@@ -126,6 +128,8 @@ src/
 - Listen for a follow-up push message from the background worker (`{ username, updatedResult }`) sent when a stale entry's refresh resolves with a changed value, and swap the badge/filter state in place — no page reload needed.
 - Re-run scan on Reddit's client-side navigation (SPA route changes) — listen for `popstate` and periodically debounce-check `location.href` changes, since new Reddit doesn't full-reload on navigation.
 - Also scan for subreddit elements (old Reddit's `a.subreddit` anchors, new Reddit's `shreddit-post[subreddit-name]`) and inject a "Block r/&lt;subreddit&gt;" chip next to each one. Clicking it adds the subreddit to the blocked list (`lib/blocked-subreddits.ts`, `chrome.storage.sync`) and immediately hides that post's container. Posts from an already-blocked subreddit are hidden on scan, before any click. Deliberately does not fall back to a generic `a[href^="/r/"]` selector, since subreddit links are ubiquitous in sidebars/nav widgets unrelated to any single post.
+- Every username element found for the badge also gets a matching "Block u/&lt;username&gt;" chip, inserted right after its badge — same chip styling/behavior as the subreddit chip (`dr-block-chip`), just labeled `u/` instead of `r/`. Clicking it adds the username to the blocked list (`lib/blocked-users.ts`, `chrome.storage.sync`) and immediately hides that post/comment's container. Independent of BotBouncer classification — lets a user hand-block an account regardless of its flair.
+- Search result cards (`[data-testid="search-post-unit"]`) don't expose an author anywhere in the DOM — not even in an open shadow root — so neither the badge nor the block-u chip can be built synchronously the way they are on the feed. Instead, `scanSearchAuthors` extracts each card's post id from its title permalink and batch-resolves authors via a `resolve-post-authors` message (see below). Once an author resolves, the badge and block-u chip are created and clustered next to the card's subreddit chip, exactly like the feed.
 
 ### `background.ts` responsibilities
 
@@ -133,9 +137,10 @@ src/
   1. **No cache entry** → respond nothing yet; enqueue on **priority queue**; respond to the content script once resolved.
   2. **Cache entry exists, fresh** → return immediately, no queue.
   3. **Cache entry exists, stale** → return the stale entry immediately (so the badge/filter renders using last-known status) _and_ enqueue on **refresh queue** for silent revalidation. If the refreshed result differs from the stale one, push an update message to the originating tab's content script to swap state in place.
-- Queue processor: always fully drains the priority queue before pulling any job from the refresh queue.
+- Queue processor: always fully drains the priority queue, then the refresh queue, then the **post-author queue** (see below) — all through the same rate-limited/backoff gate, so every reddit.com request the extension makes, regardless of purpose, is serialized behind a single `requestDelayMs` spacing.
 - On fetch: call `reddit-api.ts#fetchFlairForUser`, parse response, overwrite the cache entry, respond/push to the relevant tab(s).
 - Handle fetch failures (network error, non-200, malformed JSON) gracefully: for entries with no prior cache, cache a short-TTL "unknown" result to avoid hammering on persistent failures; for entries that already had a stale value, leave the existing value in place and simply retry the refresh later rather than overwriting with a failure state.
+- **Post-author resolution (`resolve-post-authors` message):** for search result cards, which expose no author in the DOM. Already-cached post ids are returned synchronously; uncached ones are deduped into a `postAuthorQueue`, drained in batches of up to `MAX_POST_AUTHOR_BATCH` (50) via `reddit-api.ts#fetchAuthorsForPostIds` — a single request to Reddit's public `/by_id/t3_&lt;id&gt;,...json` listing endpoint returns every requested post's author at once, rather than one request per post. Resolved authors are cached permanently in `lib/post-author-cache.ts` (pruned on the same 30-day alarm as the flair cache) and pushed to viewing tabs via a `post-author-resolved` message, mirroring the `flair-updated` push for stale-refresh. A `[deleted]` author, or a post id `/by_id` doesn't return at all, resolves to `null` and gets no badge/chip.
 
 ### `lib/reddit-api.ts`
 
@@ -189,10 +194,11 @@ interface Settings {
 
 ## Dashboard Page UI
 
-Opened via the popup's "Dashboard" button (`chrome.tabs.create` to `dashboard.html`), not the options page. Two tabs:
+Opened via the popup's "Dashboard" button (`chrome.tabs.create` to `dashboard.html`), not the options page. Three tabs:
 
 - **Analyzed Users** — every cached username (`cache.ts#getAll`) with its flair, checked-at time, fresh/stale status, and a link to the BotBouncer post that produced the classification.
 - **Blocked Subreddits** — every entry in `lib/blocked-subreddits.ts`, with blocked-at time and an "Unblock" button that removes it from the list.
+- **Blocked Users** — every entry in `lib/blocked-users.ts`, with blocked-at time and an "Unblock" button that removes it from the list. Separate from the BotBouncer-classified "Analyzed Users" tab — this is the user's own hand-picked block list.
 
 ---
 
