@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  findAuthorElements,
   findSearchAuthorTargets,
   findSubredditElements,
   isSearchAuthorProcessed,
@@ -7,6 +8,70 @@ import {
   markSearchAuthorProcessed,
   markSubredditProcessed,
 } from "../src/lib/dom-selectors";
+
+describe("findAuthorElements", () => {
+  it("extracts the username from an old-Reddit a.author anchor inside a .thing container, flagged as a post", () => {
+    document.body.innerHTML = `
+      <div class="thing">
+        <a class="author" href="/user/someone">someone</a>
+      </div>
+    `;
+    const matches = findAuthorElements(document.body);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ username: "someone", isComment: false });
+  });
+
+  it("extracts the username from an old-Reddit a.author anchor inside a .Comment container, flagged as a comment", () => {
+    document.body.innerHTML = `
+      <div class="Comment">
+        <a class="author" href="/user/someone">someone</a>
+      </div>
+    `;
+    const matches = findAuthorElements(document.body);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ username: "someone", isComment: true });
+  });
+
+  it("extracts the username from a shreddit-post author attribute, flagged as a post", () => {
+    document.body.innerHTML = `
+      <shreddit-post author="someone">
+        <a slot="authorName" href="/user/someone">someone</a>
+      </shreddit-post>
+    `;
+    const matches = findAuthorElements(document.body);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ username: "someone", isComment: false });
+  });
+
+  it("extracts the username from a shreddit-comment author attribute, flagged as a comment", () => {
+    document.body.innerHTML = `
+      <shreddit-comment author="someone">
+        <a slot="authorName" href="/user/someone">someone</a>
+      </shreddit-comment>
+    `;
+    const matches = findAuthorElements(document.body);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ username: "someone", isComment: true });
+  });
+
+  it("ignores a.author links outside of a post/comment container (e.g. old-Reddit sidebar moderator list)", () => {
+    document.body.innerHTML = `
+      <div class="sidebar">
+        <a class="author" href="/user/mod1">mod1</a>
+      </div>
+    `;
+    expect(findAuthorElements(document.body)).toHaveLength(0);
+  });
+
+  it("ignores generic /user/ links anywhere on the page that aren't a recognized post/comment author (e.g. left-nav 'Manage Communities' link)", () => {
+    document.body.innerHTML = `
+      <li class="left-nav-manage-communities-link">
+        <a href="/user/Mysterious-Swing3719/communities">Manage Communities</a>
+      </li>
+    `;
+    expect(findAuthorElements(document.body)).toHaveLength(0);
+  });
+});
 
 describe("findSubredditElements", () => {
   it("extracts the subreddit from an old-Reddit a.subreddit anchor", () => {

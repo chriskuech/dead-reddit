@@ -33,10 +33,11 @@ account, community, and individual accounts you block by hand:
    by bots, one click hides every post from it, immediately and permanently,
    without leaving the page.
 3. **Blocks individual accounts by hand.** A matching "Block u/‹username›"
-   chip appears next to every username you see. Useful for accounts
-   BotBouncer hasn't classified (yet) but you've decided you don't want to
-   see — one click hides every post and comment from that account,
-   immediately and permanently.
+   chip appears next to every post author you see (comment authors get the
+   badge only, not the chip). Useful for accounts BotBouncer hasn't
+   classified (yet) but you've decided you don't want to see — one click
+   hides every post and comment from that account, immediately and
+   permanently.
 
 Nothing is sent anywhere you didn't already send it — the extension rides
 your existing logged-in reddit.com session to look up classifications

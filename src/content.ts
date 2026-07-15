@@ -316,9 +316,12 @@ async function handleUserBlockClick(username: string): Promise<void> {
 }
 
 /**
- * Inserts a "Block u/‹username›" chip immediately after the post/comment's subreddit block
- * chip, so the two block buttons sit right next to each other. Falls back to right after
- * `afterEl` (the just-created badge) when the container has no subreddit chip (e.g. comments).
+ * Inserts a "Block u/‹username›" chip immediately after the post's subreddit block chip, so
+ * the two block buttons sit right next to each other. Falls back to right after `afterEl`
+ * (the just-created badge) when the container has no subreddit chip (e.g. search cards before
+ * their subreddit chip has been created). Only ever called for posts — comment authors don't
+ * get a block chip at all (see the `isComment` check in scan()), so this can't drift to a
+ * comment's subreddit-chip-less container the way it used to.
  */
 function createUserBlockRecord(match: AuthorMatch, afterEl: Element): void {
   const username = normalizeUsername(match.username);
@@ -356,7 +359,13 @@ async function requestClassifications(usernames: string[]): Promise<void> {
 /** Builds the badge + user-block chip for a search card once its author has been resolved. */
 function createSearchAuthorRecord(containerElement: Element, username: string): void {
   const anchorElement = subredditChipByContainer.get(containerElement) ?? containerElement;
-  const match: AuthorMatch = { username, anchorElement, containerElement, markerElement: containerElement };
+  const match: AuthorMatch = {
+    username,
+    anchorElement,
+    containerElement,
+    markerElement: containerElement,
+    isComment: false,
+  };
   const badgeEl = createBadgeRecord(match);
   createUserBlockRecord(match, badgeEl);
   void requestClassifications([username.toLowerCase()]);
@@ -400,8 +409,8 @@ function scanSearchAuthors(root: ParentNode): void {
 }
 
 function scan(root: ParentNode): void {
-  // Subreddit chips are created first so createUserBlockRecord can find one on the same
-  // container and place the user-block chip right next to it.
+  // Subreddit chips are created first so createUserBlockRecord/createSearchAuthorRecord can
+  // find one on the same container and cluster the user-block chip right next to it.
   const subredditMatches = findSubredditElements(root);
   for (const match of subredditMatches) {
     markSubredditProcessed(match.markerElement);
@@ -414,7 +423,7 @@ function scan(root: ParentNode): void {
   for (const match of matches) {
     markProcessed(match.markerElement);
     const badgeEl = createBadgeRecord(match);
-    createUserBlockRecord(match, badgeEl);
+    if (!match.isComment) createUserBlockRecord(match, badgeEl);
   }
   if (matches.length > 0) {
     void requestClassifications(matches.map((match) => match.username.toLowerCase()));

@@ -12,6 +12,8 @@ export interface AuthorMatch {
   containerElement: Element;
   /** Element to tag as processed, preventing reprocessing on subsequent scans. */
   markerElement: Element;
+  /** True when this match is a comment author rather than a post author. */
+  isComment: boolean;
 }
 
 const PROCESSED_ATTR = "data-dr-processed";
@@ -128,11 +130,6 @@ function isDeletedUsername(username: string): boolean {
   return username.length === 0 || username.toLowerCase() === "[deleted]";
 }
 
-function extractUsernameFromHref(href: string): string | null {
-  const match = /\/u(?:ser)?\/([^/?#]+)/i.exec(href);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
-}
-
 function extractSubredditFromHref(href: string): string | null {
   const match = /\/r\/([^/?#]+)/i.exec(href);
   return match?.[1] ? decodeURIComponent(match[1]) : null;
@@ -164,8 +161,11 @@ function queryAllInclusive(root: ParentNode, selector: string): Element[] {
 
 /**
  * Scans `root` for username-bearing elements not yet marked processed, covering old
- * Reddit's `.author` anchors, Shreddit custom elements exposing an `author` attribute,
- * and a generic `/user/<name>` link fallback for anything else (profile pages, inbox, etc).
+ * Reddit's `.author` anchors (scoped to an actual post/comment container) and Shreddit
+ * custom elements exposing an `author` attribute. Deliberately has no generic `/user/<name>`
+ * link fallback — such links are ubiquitous in nav/sidebar widgets unrelated to any single
+ * post or comment (e.g. old Reddit's sidebar moderator list also uses `a.author`, and the
+ * new-Reddit left nav's "Manage Communities" link points at `/user/<self>/communities`).
  */
 export function findAuthorElements(root: ParentNode): AuthorMatch[] {
   const matches: AuthorMatch[] = [];
@@ -173,14 +173,17 @@ export function findAuthorElements(root: ParentNode): AuthorMatch[] {
 
   for (const el of queryAllInclusive(root, OLD_REDDIT_AUTHOR_SELECTOR)) {
     if (isProcessed(el) || claimed.has(el)) continue;
+    const container = el.closest(OLD_REDDIT_CONTAINER_SELECTOR);
+    if (!container) continue; // e.g. sidebar moderator list
     const username = el.textContent?.trim().replace(/^u\//i, "") ?? "";
     if (isDeletedUsername(username)) continue;
     claimed.add(el);
     matches.push({
       username,
       anchorElement: el,
-      containerElement: findContainer(el),
+      containerElement: container,
       markerElement: el,
+      isComment: container.classList.contains("Comment"),
     });
   }
 
@@ -199,21 +202,7 @@ export function findAuthorElements(root: ParentNode): AuthorMatch[] {
       anchorElement: anchor,
       containerElement: host,
       markerElement: host,
-    });
-  }
-
-  for (const el of queryAllInclusive(root, GENERIC_USER_LINK_SELECTOR)) {
-    if (isProcessed(el) || claimed.has(el)) continue;
-    if (el.closest(SHREDDIT_AUTHOR_HOST_SELECTOR)) continue; // already covered above
-    const href = el.getAttribute("href");
-    const username = href ? extractUsernameFromHref(href) : null;
-    if (!username || isDeletedUsername(username)) continue;
-    claimed.add(el);
-    matches.push({
-      username,
-      anchorElement: el,
-      containerElement: findContainer(el),
-      markerElement: el,
+      isComment: host.tagName.toLowerCase() === "shreddit-comment",
     });
   }
 
