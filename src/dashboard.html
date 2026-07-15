@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dead Reddit — Dashboard</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <div class="dr-dashboard">
+      <h1>Dead Reddit</h1>
+
+      <div class="dr-tabs" role="tablist">
+        <button class="dr-tab dr-tab--active" id="tab-users" role="tab" aria-selected="true">
+          Analyzed Users
+        </button>
+        <button class="dr-tab" id="tab-subreddits" role="tab" aria-selected="false">
+          Blocked Subreddits
+        </button>
+      </div>
+
+      <div class="dr-tab-panel" id="panel-users" role="tabpanel">
+        <p class="dr-muted" id="users-count">0 users analyzed</p>
+        <table class="dr-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Flair</th>
+              <th>Checked at</th>
+              <th>Status</th>
+              <th>Post</th>
+            </tr>
+          </thead>
+          <tbody id="users-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="dr-tab-panel" id="panel-subreddits" role="tabpanel" hidden>
+        <p class="dr-muted" id="subreddits-count">0 blocked subreddits</p>
+        <table class="dr-table">
+          <thead>
+            <tr>
+              <th>Subreddit</th>
+              <th>Blocked at</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="subreddits-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <script type="module" src="dashboard.ts"></script>
+  </body>
+</html>

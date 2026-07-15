@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Queue releases rather than running in parallel so each run sees the tag
+# created by the previous one when computing the next minor version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      # manifest.json/version is the only manually managed version component.
+      # It holds just the major (e.g. "1"); increment it to start a new major
+      # line and everything else is computed automatically.
+      - name: Compute release version
+        id: version
+        run: |
+          MAJOR=$(jq -r '.version' src/manifest.json)
+
+          LATEST_MINOR=$(gh release list \
+            --exclude-drafts \
+            --exclude-pre-releases \
+            --limit 1000 \
+            --json tagName \
+            --jq "[.[] | .tagName
+                       | select(startswith(\"v${MAJOR}.\"))
+                       | ltrimstr(\"v${MAJOR}.\")
+                       | split(\".\")[0]
+                       | tonumber
+                  ] | max // -1")
+
+          echo "value=${MAJOR}.$((LATEST_MINOR + 1))" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Patch the computed version into dist/ (not committed; src/ is unchanged)
+      - name: Stamp version into dist manifest
+        run: |
+          jq --arg v "${{ steps.version.outputs.value }}" '.version = $v' \
+            dist/manifest.json > dist/manifest.tmp.json
+          mv dist/manifest.tmp.json dist/manifest.json
+
+      - name: Package extension
+        run: cd dist && zip -r ../extension.zip .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
+          files: extension.zip
+          generate_release_notes: true

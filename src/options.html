@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dead Reddit — Options</title>
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <div class="dr-options">
+      <div class="dr-section">
+        <div class="dr-row dr-row--space-between">
+          <h2>Dead Reddit</h2>
+          <label class="dr-switch">
+            <input type="checkbox" id="enabled-toggle" />
+            <span class="dr-switch__slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="dr-section">
+        <h2>Filter by classification</h2>
+        <div id="flair-list" class="dr-flair-list"></div>
+
+        <div class="dr-field">
+          <label for="filter-action">Filter action</label>
+          <select id="filter-action">
+            <option value="hide">Hide entirely</option>
+            <option value="collapse">Visually collapse</option>
+            <option value="badge-only">Badge only (never hide)</option>
+          </select>
+        </div>
+
+        <div class="dr-field">
+          <label for="show-unclassified">Show badge for unclassified users</label>
+          <input type="checkbox" id="show-unclassified" />
+        </div>
+      </div>
+
+      <div class="dr-section">
+        <h2>Cache &amp; rate limiting</h2>
+        <div class="dr-field">
+          <label for="cache-ttl">Cache TTL (minutes)</label>
+          <input type="number" id="cache-ttl" min="1" step="1" />
+        </div>
+        <div class="dr-field">
+          <label for="request-delay">Request delay (ms)</label>
+          <input type="number" id="request-delay" min="0" step="50" />
+        </div>
+        <button class="dr-danger" id="clear-cache">Clear cache</button>
+      </div>
+
+      <div class="dr-section">
+        <h2>Stats</h2>
+        <dl class="dr-stats-grid">
+          <div>
+            <dt>Cache size</dt>
+            <dd id="stat-cache-size">–</dd>
+          </div>
+          <div>
+            <dt>Stale entries</dt>
+            <dd id="stat-stale-count">–</dd>
+          </div>
+          <div>
+            <dt>Pending refresh/lookup</dt>
+            <dd id="stat-pending-count">–</dd>
+          </div>
+          <div>
+            <dt>Last sync</dt>
+            <dd id="stat-last-sync">–</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+    <script type="module" src="options.ts"></script>
+  </body>
+</html>

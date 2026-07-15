@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dead Reddit</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      body {
+        width: 260px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dr-panel">
+      <div class="dr-row dr-row--space-between">
+        <span class="dr-title">Dead Reddit</span>
+        <label class="dr-switch">
+          <input type="checkbox" id="enabled-toggle" />
+          <span class="dr-switch__slider"></span>
+        </label>
+      </div>
+
+      <div class="dr-stat">
+        <span class="dr-stat__value" id="flagged-count">0</span>
+        <span class="dr-stat__label">flagged users on this page</span>
+      </div>
+
+      <p class="dr-warning" id="rate-limit-warning" hidden></p>
+
+      <div class="dr-row">
+        <button class="dr-link-button" id="open-dashboard">Dashboard</button>
+        <button class="dr-link-button" id="open-options">Options</button>
+      </div>
+    </div>
+    <script type="module" src="popup.ts"></script>
+  </body>
+</html>

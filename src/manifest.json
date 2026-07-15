@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Dead Reddit",
+  "description": "Flags Reddit usernames with their BotBouncer classification and can filter (hide) flagged accounts.",
+  "version": "0",
+  "permissions": ["storage"],
+  "host_permissions": ["*://*.reddit.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://*.reddit.com/*"],
+      "js": ["src/content.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup.html"
+  },
+  "options_page": "src/options.html",
+  "icons": {
+    "16": "src/assets/icon16.png",
+    "48": "src/assets/icon48.png",
+    "128": "src/assets/icon128.png"
+  }
+}
